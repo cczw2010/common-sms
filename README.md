@@ -4,10 +4,10 @@
 
 ## 1. 功能范围
 
-当前封装提供以下统一接口能力（已做第一批稳定性优化）：
+当前封装提供以下统一接口能力：
 
 - 模板短信单发
-- 模板短信批量发送（单条失败不中断，返回部分成功结果）
+- 模板短信批量发送
 - 模板申请
 - 模板审批（通过/驳回）
 - 模板管理（启用、禁用、删除、查询、列表）
@@ -94,11 +94,9 @@ Sms4jUnifiedTool.BatchSendResult batch = tool.sendTemplateBatch(
 
 ### 4.1 发送相关
 
-- `sendTemplateSingle(...)`：模板单发（前置校验手机号、签名、渠道）
-- `sendTemplateBatch(...)`：模板批量发送（手机号去重、逐条容错、不中断整个批次）
+- `sendTemplateSingle(...)`：模板单发
+- `sendTemplateBatch(...)`：模板批量发送
 - `querySendResult(requestId)`：查询发送审计结果
-
-> 对外返回对象采用副本策略（防御性复制），避免调用方误修改内部内存状态。
 
 ### 4.2 模板相关
 
@@ -138,30 +136,3 @@ Sms4jUnifiedTool.BatchSendResult batch = tool.sendTemplateBatch(
 - 手机号校验规则为大陆手机号简化规则：`^1\d{10}$`。
 - 批量发送默认按“逐条调用 invoker”实现，便于后续替换为供应商批量 API。
 
-
-
-## 7. 基于 dromara/SMS4J 的直接实现与最终 Demo
-
-本仓库已新增：
-
-- `Sms4jDromaraInvoker.java`：`Sms4jUnifiedTool.Sms4jInvoker` 的 SMS4J 实现（反射桥接，适配不同版本方法签名）
-- `Sms4jUsageDemo.java`：最终使用流程示例（模板申请/审批、单发、批量）
-
-### 7.1 在 SpringBoot 中接入（示意）
-
-```java
-// 假设 sms4jSender 是你从 Spring 容器拿到的 SMS4J 发送对象（例如 SmsBlend）
-Object sms4jSender = smsBlend;
-Sms4jUnifiedTool.Sms4jInvoker invoker = new Sms4jDromaraInvoker(sms4jSender, "sendMessage");
-Sms4jUnifiedTool tool = new Sms4jUnifiedTool(invoker);
-```
-
-### 7.2 运行 Demo
-
-```bash
-javac Sms4jUnifiedTool.java Sms4jDromaraInvoker.java Sms4jUsageDemo.java
-java Sms4jUsageDemo
-```
-
-> 如果你已经在项目里引入 SMS4J，建议把 `Sms4jDromaraInvoker` 从“反射桥接”升级为“强类型调用”，
-> 直接 import SMS4J 的发送类，这样 IDE/编译期校验更友好。

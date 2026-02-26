@@ -3,7 +3,6 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -47,7 +46,6 @@ public class Sms4jUnifiedTool {
                                          String signName,
                                          String channel) {
         validatePhone(phone);
-        validateSendCommonParams(signName, channel);
         TemplateMeta template = validateTemplateCanSend(templateCode);
 
         SendRequest request = new SendRequest(
@@ -59,7 +57,8 @@ public class Sms4jUnifiedTool {
         );
 
         SendResult result = sms4jInvoker.send(request);
-        return enrichAndAudit(result, template, 1);
+        enrichAndAudit(result, template, 1);
+        return result;
     }
 
     /**
@@ -73,9 +72,7 @@ public class Sms4jUnifiedTool {
         if (phones == null || phones.isEmpty()) {
             throw new IllegalArgumentException("phones 不能为空");
         }
-        validateSendCommonParams(signName, channel);
-        List<String> deduplicatedPhones = deduplicatePhones(phones);
-        for (String phone : deduplicatedPhones) {
+        for (String phone : phones) {
             validatePhone(phone);
         }
         TemplateMeta template = validateTemplateCanSend(templateCode);
@@ -83,7 +80,7 @@ public class Sms4jUnifiedTool {
         BatchSendResult batchResult = new BatchSendResult();
         List<SendResult> details = new ArrayList<>();
 
-        for (String phone : deduplicatedPhones) {
+        for (String phone : phones) {
             SendRequest single = new SendRequest(
                     templateCode,
                     Collections.singletonList(phone),
@@ -91,17 +88,13 @@ public class Sms4jUnifiedTool {
                     signName,
                     channel
             );
-            try {
-                SendResult result = sms4jInvoker.send(single);
-                details.add(enrichAndAudit(result, template, 1));
-            } catch (Exception ex) {
-                SendResult failResult = buildFailSendResult(template, ex);
-                details.add(enrichAndAudit(failResult, template, 1));
-            }
+            SendResult result = sms4jInvoker.send(single);
+            enrichAndAudit(result, template, 1);
+            details.add(result);
         }
 
-        batchResult.setResults(copySendResultList(details));
-        batchResult.setTotal(deduplicatedPhones.size());
+        batchResult.setResults(details);
+        batchResult.setTotal(details.size());
         batchResult.setSuccess((int) details.stream().filter(SendResult::isSuccess).count());
         batchResult.setFailed(batchResult.getTotal() - batchResult.getSuccess());
         return batchResult;
@@ -190,11 +183,11 @@ public class Sms4jUnifiedTool {
     }
 
     public TemplateMeta getTemplate(String templateCode) {
-        return copyTemplateMeta(getTemplateOrThrow(templateCode));
+        return getTemplateOrThrow(templateCode);
     }
 
     public List<TemplateMeta> listTemplates() {
-        return copyTemplateMetaList(templateStore.values());
+        return new ArrayList<>(templateStore.values());
     }
 
     public SendResult querySendResult(String requestId) {
@@ -202,10 +195,10 @@ public class Sms4jUnifiedTool {
         if (result == null) {
             throw new IllegalArgumentException("未找到发送记录，requestId=" + requestId);
         }
-        return copySendResult(result);
+        return result;
     }
 
-    private SendResult enrichAndAudit(SendResult result, TemplateMeta template, int count) {
+    private void enrichAndAudit(SendResult result, TemplateMeta template, int count) {
         if (isBlank(result.getRequestId())) {
             result.setRequestId(UUID.randomUUID().toString());
         }
@@ -213,9 +206,7 @@ public class Sms4jUnifiedTool {
         result.setTemplateName(template.getTemplateName());
         result.setPhoneCount(count);
         result.setSendTime(LocalDateTime.now());
-        SendResult toStore = copySendResult(result);
-        sendAuditStore.put(toStore.getRequestId(), toStore);
-        return copySendResult(toStore);
+        sendAuditStore.put(result.getRequestId(), result);
     }
 
     private TemplateMeta validateTemplateCanSend(String templateCode) {
@@ -241,79 +232,6 @@ public class Sms4jUnifiedTool {
         if (isBlank(phone) || !phone.matches("^1\\d{10}$")) {
             throw new IllegalArgumentException("手机号不合法: " + phone);
         }
-    }
-
-    private void validateSendCommonParams(String signName, String channel) {
-        if (isBlank(signName)) {
-            throw new IllegalArgumentException("signName 不能为空");
-        }
-        if (isBlank(channel)) {
-            throw new IllegalArgumentException("channel 不能为空");
-        }
-    }
-
-    private List<String> deduplicatePhones(List<String> phones) {
-        return new ArrayList<>(new LinkedHashSet<>(phones));
-    }
-
-    private SendResult buildFailSendResult(TemplateMeta template, Exception ex) {
-        SendResult fail = new SendResult();
-        fail.setSuccess(false);
-        fail.setProviderCode("INVOKER_EXCEPTION");
-        fail.setProviderMessage(ex.getMessage() == null ? ex.getClass().getSimpleName() : ex.getMessage());
-        fail.setTemplateCode(template.getTemplateCode());
-        fail.setTemplateName(template.getTemplateName());
-        return fail;
-    }
-
-    private List<TemplateMeta> copyTemplateMetaList(Iterable<TemplateMeta> metas) {
-        List<TemplateMeta> copies = new ArrayList<>();
-        for (TemplateMeta meta : metas) {
-            copies.add(copyTemplateMeta(meta));
-        }
-        return copies;
-    }
-
-    private List<SendResult> copySendResultList(Iterable<SendResult> sendResults) {
-        List<SendResult> copies = new ArrayList<>();
-        for (SendResult sendResult : sendResults) {
-            copies.add(copySendResult(sendResult));
-        }
-        return copies;
-    }
-
-    private TemplateMeta copyTemplateMeta(TemplateMeta source) {
-        if (source == null) {
-            return null;
-        }
-        TemplateMeta copy = new TemplateMeta();
-        copy.setTemplateCode(source.getTemplateCode());
-        copy.setTemplateName(source.getTemplateName());
-        copy.setTemplateContent(source.getTemplateContent());
-        copy.setScene(source.getScene());
-        copy.setStatus(source.getStatus());
-        copy.setRejectReason(source.getRejectReason());
-        copy.setCreatedBy(source.getCreatedBy());
-        copy.setCreatedAt(source.getCreatedAt());
-        copy.setUpdatedAt(source.getUpdatedAt());
-        return copy;
-    }
-
-    private SendResult copySendResult(SendResult source) {
-        if (source == null) {
-            return null;
-        }
-        SendResult copy = new SendResult();
-        copy.setRequestId(source.getRequestId());
-        copy.setSuccess(source.isSuccess());
-        copy.setProviderCode(source.getProviderCode());
-        copy.setProviderMessage(source.getProviderMessage());
-        copy.setTemplateCode(source.getTemplateCode());
-        copy.setTemplateName(source.getTemplateName());
-        copy.setPhoneCount(source.getPhoneCount());
-        copy.setSendTime(source.getSendTime());
-        copy.setExt(source.getExt() == null ? new LinkedHashMap<>() : new LinkedHashMap<>(source.getExt()));
-        return copy;
     }
 
     private Map<String, String> defaultIfNull(Map<String, String> input) {
